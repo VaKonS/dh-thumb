@@ -4,8 +4,11 @@ Adds thumbnails to drawings for "Drawing Hand Screen Saver" by Jeff Newman (http
 
 This software is public domain.
 
-To compile, you'll need [OpenCV](https://github.com/opencv/opencv) and [TCLAP](https://sourceforge.net/projects/tclap/) packages.
+To compile, you'll need [OpenCV](https://github.com/opencv/opencv) and [TCLAP](https://sourceforge.net/projects/tclap/) packages, try to run "make".
 
 ---
 ## Usage:
 `rdr.exe -i "original.drawinghand" -t "rendered_image.png"`
+
+---
+![Resulting thumbnail](https://github.com/VaKonS/dh-thumb/raw/master/admir.gif)
