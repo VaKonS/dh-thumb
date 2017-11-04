@@ -1,0 +1,7 @@
+Set line 675 of /modules/imgcodecs/src/grfmt_jpeg.cpp
+(https://github.com/opencv/opencv/blob/7267e94be78b3c8be4f1f08b912ab57a52cf0954/modules/imgcodecs/src/grfmt_jpeg.cpp#L675)
+            if ( luma_quality != chroma_quality )
+to:
+            if ( (luma_quality != chroma_quality) || (chroma_quality == 100) )
+
+Then chroma subsampling factors will be 1x1 when CV_IMWRITE_JPEG_CHROMA_QUALITY == 100.
