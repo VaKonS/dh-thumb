@@ -42,7 +42,7 @@ const std::string drawingExt3 = ".drawinghand";
 // uninitialized data
 unsigned thumb_size;
 int drawingType; // 1 rdr  2 geerdr  3 drawinghand
-int geeVersion; // 7 - none?,  8, 9 - jpeg, bmp?
+int geeVersion; // 1-4 geerdr, 5-9 drawinghand
 int geeSubVersion;
 bool silent_process, force_drawing;
 std::string rdr_pInputFile, rdr_pThumbnailFile, rdr_pOutputFile, drawingExt;
@@ -237,14 +237,16 @@ drawing_error_msg:
 
 // -----------------------------------------------------------------------------
     unsigned data_pos = 0;
+    //unsigned prev_pos = 0;
 
 if (drawingType == 1) {
     //.rdr
 // NN NN ................................................. NN NN WWWW HHHH NN NN NN NN NN NN NN NN 00 03 00 01 palette 04 ...
 // 2f 00 01 00 00 00 01 00 00 00 00 00 00 00 LLLLLLLL jpeg NN NN WWWW HHHH NN NN NN NN NN NN NN NN 00 03 00 01 palette 04 ...
 
+    unsigned tl;
     if (memcmp(drawing_buffer, &rdr_new_header, sizeof(rdr_new_header)) == 0) {
-        unsigned tl = *((unsigned*) (drawing_buffer + sizeof(rdr_new_header)));
+        tl = *((unsigned*) (drawing_buffer + sizeof(rdr_new_header)));
         // std::cout << "thumbnail length = " << tl << std::endl;
         data_pos = data_pos + sizeof(rdr_new_header) + 4 + tl + 14;
         if (data_pos + sizeof(rdr_data) + 4 < static_cast<unsigned>(drawing_length)) {
@@ -259,60 +261,52 @@ if (drawingType == 1) {
                 }
             }
         }
-    }
+    } else
+        tl = 0;
 
-    while (data_pos < static_cast<unsigned>(drawing_length)) {
-        data_pos = std::find(drawing_buffer + data_pos, drawing_buffer + drawing_length, rdr_data[0]) - drawing_buffer;
-//        if ((data_pos & 0xff) == 0)
-//            std::cout << "data_pos: " << data_pos << std::endl;
-
-        if (memcmp(drawing_buffer + data_pos, &rdr_data, sizeof(rdr_data)) == 0) {
-            if (drawing_buffer[data_pos + sizeof(rdr_data) + 3] == '\4') {
-                short w1 = *((short*) (drawing_buffer + data_pos - 12));
-                short h1 = *((short*) (drawing_buffer + data_pos - 10));
-                //if (!silent_process) std::cout << "Canvas size: " << w1 << "x" << h1 << " pixels." << std::endl;
-                if ((h1 == 0) or (w1 == 0)) {
-                    std::cout << "\nWarning: zero width or height found." << std::endl;
-                    if (!silent_process) {
-                        std::cout << "Is it really a drawing?\n" << std::endl;
-                    } else {
-                        std::cout << "Is \"" << rdr_pInputFile << "\" really a drawing?" << std::endl;
+    // tl = search limit
+    tl = std::min(tl + 1000000, static_cast<unsigned>(drawing_length) - sizeof(rdr_data));
+    while (data_pos <= tl) {
+        data_pos = std::find(drawing_buffer + data_pos, drawing_buffer + drawing_length - sizeof(rdr_data) + 1, rdr_data[0]) - drawing_buffer;
+        if (data_pos < (drawing_length - sizeof(rdr_data) + 1)) {
+            if (memcmp(drawing_buffer + data_pos, &rdr_data, sizeof(rdr_data)) == 0) {
+                if (drawing_buffer[data_pos + sizeof(rdr_data) + 3] == '\4') {
+                    short w1 = *((short*) (drawing_buffer + data_pos - 12));
+                    short h1 = *((short*) (drawing_buffer + data_pos - 10));
+                    //if (!silent_process) std::cout << "Canvas size: " << w1 << "x" << h1 << " pixels." << std::endl;
+                    if ((h1 == 0) or (w1 == 0)) {
+                        std::cout << "\nWarning: zero width or height found." << std::endl;
+                        if (!silent_process) {
+                            std::cout << "Is it really a drawing?\n" << std::endl;
+                        } else {
+                            std::cout << "Is \"" << rdr_pInputFile << "\" really a drawing?" << std::endl;
+                        }
                     }
+                    data_pos = data_pos - 14;
+
+                    if (!silent_process) std::cout << "Writing new RDR drawing: \"" << rdr_pOutputFile << "\"." << std::endl;
+                    outfile = std::ofstream(rdr_pOutputFile, std::ofstream::binary);
+                    if (!outfile) {
+                        delete[] drawing_buffer;
+                        std::cerr << "\nError writing the drawing \"" << rdr_pOutputFile << "\"." << std::endl;
+	                std::exit(-1);
+                    }
+                    outfile.write (&rdr_new_header[0], sizeof(rdr_new_header));
+                    outfile.write (reinterpret_cast<const char*>(&thumb_size), 4);
+                    outfile.write (reinterpret_cast<const char*>(jpeg_buff.data()), thumb_size);
+                    outfile.write (drawing_buffer + data_pos, drawing_length - data_pos);
+                    outfile.close();
+
+                    goto finish_drawing;
                 }
-                data_pos = data_pos - 14;
-//                goto write_new_rdr;
-
-
-//write_new_rdr:
-    if (!silent_process) std::cout << "Writing new RDR drawing: \"" << rdr_pOutputFile << "\"." << std::endl;
-    outfile = std::ofstream(rdr_pOutputFile, std::ofstream::binary);
-    if (!outfile) {
-        delete[] drawing_buffer;
-        std::cerr << "\nError writing the drawing \"" << rdr_pOutputFile << "\"." << std::endl;
-	std::exit(-1);
-    }
-    outfile.write (&rdr_new_header[0], sizeof(rdr_new_header));
-    outfile.write (reinterpret_cast<const char*>(&thumb_size), 4);
-    outfile.write (reinterpret_cast<const char*>(jpeg_buff.data()), thumb_size);
-    outfile.write (drawing_buffer + data_pos, drawing_length - data_pos);
-    outfile.close();
-
-    goto finish_drawing;
-
-
-            }
+            } else
+                data_pos++;
+            //if (data_pos > prev_pos) { std::cout << "data_pos: " << data_pos << std::endl; prev_pos = data_pos + 1000; }
         } else
-            data_pos++;
+            break; // pattern was not found
     }
+
     std::cout << "\nDrawing data is not found in \"" << rdr_pInputFile << "\".\nCan not make valid drawing file." << std::endl;
-    goto finish_drawing;
-
-
-//} else if (drawingType == 2) {
-//    //.geerdr
-//    std::cout << "Extension .geerdr is not supported yet." << std::endl;
-//    goto finish_drawing;
-
 
 } else if( (drawingType == 3) || (drawingType == 2) ){
     //.drawinghand, .geerdr
@@ -320,6 +314,7 @@ if (drawingType == 1) {
 // VV 00 00 00 08 "Version9" NN 00 00 00 01 00 00 00 04 "desc" LLLLLLLL bmp  WWWWWWWW HHHHHHHH ff ff ff 00 02 00 00 00 ff ff ff ff 00 ac 5e 00 00 ff ff 00 00 07 00 COpMove ...
 // VV 00 00 00 08 "Version8" NN 00 00 00 01 00 00 00 00        LLLLLLLL jpeg WWWWWWWW HHHHHHHH ff ff ff 00 02 00 00 00 ff ff ff ff 00 ac 5e 00 00 ff ff 00 00 07 00 COpMove ...
 // VV 00 00 00 08 "Version7"                                                 WWWWWWWW HHHHHHHH ff ff ff 00 02 00 00 00 ff ff ff ff 00 ac 5e 00 00 ff ff 00 00 07 00 COpMove ...
+// 01 02? 03? 04 - geerdr, 05 06 - drawinghand
 //                           NN 00 00 00                                     WWWWWWWW HHHHHHHH ff ff ff 00 02 00 00 00 ff ff ff ff 00 ac 5e 00 00 ff ff 00 00 07 00 COpMove ...
 
     int w1, h1;
@@ -330,12 +325,11 @@ if (drawingType == 1) {
         if (drawing_buffer[0] == geeVersion) {
             //std::cout << "Header matches geeVersion." << std::endl;
         } else {
-std::cout << "Header version DOES NOT MATCH 'Version'. Stop." << std::endl;
+std::cout << "Header version does not match 'Version'. Stop." << std::endl;
             goto finish_drawing;
         }
         if (geeVersion == 7) {
-// TODO: This is a hack.
-//       Need to find out how should a thumbnail be placed in V7 properly.
+            // Version 7 seems to not support thumbnails, changing to version 8, subversion 7.
             geeVersion = 8;
             geeSubVersion = 7;
             data_pos = 13;
@@ -353,13 +347,15 @@ std::cout << "'desc' found, but Version is not 9. Stop." << std::endl;
         }
         unsigned tl = *((unsigned*)(drawing_buffer + data_pos));
         //std::cout << "Thumbnail length: " << tl << " bytes." << std::endl;
+
+        // checking thumbnail format
         short thumbFmt = *((short*)(drawing_buffer + data_pos + 4));
         if (thumbFmt == 0x4d42) { // "BM" - bmp thumbnail
             //if (!silent_process) std::cout << "BMP thumbnail." << std::endl;
-            if (geeVersion != 9) {
-std::cout << "geeVersion is not 9, but thumbnail is BMP! Stop." << std::endl;
-                goto finish_drawing;
-            }
+            //if (geeVersion != 9) {
+            //    //std::cout << "geeVersion is not 9, but thumbnail is BMP! Stop." << std::endl;
+            //    goto finish_drawing;
+            //}
         } else if (thumbFmt == -9985) { // 0xd8ff - jpeg thumbnail
             //if (!silent_process) std::cout << "JPEG thumbnail." << std::endl;
             //if (geeVersion == 9) {
@@ -367,9 +363,10 @@ std::cout << "geeVersion is not 9, but thumbnail is BMP! Stop." << std::endl;
             //    goto finish_drawing;
             //}
         } else {
-            std::cout << "Unknown thumbnail format (" << thumbFmt << "). Stop." << std::endl;
+            std::cout << "Unknown thumbnail format (" << thumbFmt << ").\nOnly BMP and JPEG are supported. Stop." << std::endl;
             goto finish_drawing;
         }
+
         data_pos = data_pos + 4 + tl;
         w1 = *((int*) (drawing_buffer + data_pos));
         h1 = *((int*) (drawing_buffer + data_pos + 4));
@@ -392,7 +389,7 @@ std::cout << "geeVersion is not 9, but thumbnail is BMP! Stop." << std::endl;
             }
         } else
             goto no_gee_sig;
-    } else { // no "VersionX" header
+    } else { // no "VersionX" header - versions 1...6, changing to version 8, subversion N
         geeVersion = 8;
         geeSubVersion = *((int*) drawing_buffer);
         data_pos = 4;
@@ -411,19 +408,17 @@ headerless_geerdr:
         }
         if (memcmp(drawing_buffer + data_pos + 29, &geeSignature, sizeof(geeSignature)) != 0) {
 no_gee_sig:
-            std::cout << "Drawing signature is NOT found. Stop." << std::endl;
+            std::cout << "\nDrawing data is not found in \"" << rdr_pInputFile << "\".\nCan not make valid drawing file." << std::endl;
             goto finish_drawing;
         } //else {
          //   std::cout << "geeSignature found." << std::endl;
         //}
     }
 
-
     if ( (geeVersion != 8) and (geeVersion != 9) ) {
-std::cout << "Version is not 7, 8 or 9. Stop." << std::endl;
+        std::cout << "\n'Version' is not 8 or 9. Stop." << std::endl;
         goto finish_drawing;
     }
-
 
     if (!silent_process) std::cout << "Writing new drawing: \"" << rdr_pOutputFile << "\"." << std::endl;
     outfile = std::ofstream(rdr_pOutputFile, std::ofstream::binary);
@@ -450,17 +445,10 @@ std::cout << "Version is not 7, 8 or 9. Stop." << std::endl;
     outfile.write (drawing_buffer + data_pos, drawing_length - data_pos);
     outfile.close();
 
-
-//    std::cout << "Extension .drawinghand is not supported yet." << std::endl;
-    goto finish_drawing;
-
-} else goto finish_drawing;
+}
 
 
-// -----------------------------------------------------------------------------
-
-
-    // finished
+// - finished ------------------------------------------------------------------
 finish_drawing:
     delete[] drawing_buffer;
     return 0;
