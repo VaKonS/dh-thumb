@@ -49,6 +49,8 @@ std::string rdr_pInputFile, rdr_pThumbnailFile, rdr_pOutputFile, drawingExt;
 std::vector<uchar> jpeg_buff;
 std::ofstream outfile;
 char * drawing_buffer;
+cv::Mat drawing_corners[4];
+cv::Scalar corners_mean;
 
 
 // ----------------------------------------------------------
@@ -111,56 +113,72 @@ int main(int argc, char** argv) {
     unsigned cl = 0;
     unsigned cr = iw;
     float edge = 0;
+
+    // cv::Vec3f image.at(ih-1,iw-1) crashes, therefore using cv::Mat
+    drawing_corners[0] = cv::Mat(image, cv::Rect(0, 0, 1, 1)); //cv::Rect(x,y,width,height)
+    drawing_corners[1] = cv::Mat(image, cv::Rect(iw - 1, 0, 1, 1));
+    drawing_corners[2] = cv::Mat(image, cv::Rect(0, ih - 1, 1, 1));
+    drawing_corners[3] = cv::Mat(image, cv::Rect(iw - 1, ih - 1, 1, 1));
+    corners_mean = cv::mean((drawing_corners[0] +
+                             drawing_corners[1] +
+                             drawing_corners[2] +
+                             drawing_corners[3]) / 4);
+    //std::cout << "corners' mean: " << corners_mean << std::endl;
+    float corners_average = (corners_mean[0] + corners_mean[1] + corners_mean[2]) / 3;
+    //std::cout << "corners_average: " << corners_average << std::endl;
+
     for (unsigned r = 0; r < ih; r++) {
         cv::Mat row = cv::Mat(image, cv::Rect(0, r, iw, 1)); //cv::Rect(x,y,width,height)
         cv::Scalar m = cv::mean(row);
-        float e = std::max(std::max(std::max(m[0], m[1]), m[2]), m[3]);
+        float e = abs((m[0] + m[1] + m[2]) / 3 - corners_average);
         if (e != 0) {
             ct = r;
-            edge = edge + e;
+            edge += e;
             break;
         }
     }
     for (int r = ih - 1; r >= 0; r--) {
         cv::Mat row = cv::Mat(image, cv::Rect(0, r, iw, 1));
         cv::Scalar m = cv::mean(row);
-        float e = std::max(std::max(std::max(m[0], m[1]), m[2]), m[3]);
+        float e = abs((m[0] + m[1] + m[2]) / 3 - corners_average);
         if (e != 0) {
             cb = static_cast<unsigned>(r) + 1;
-            edge = edge + e;
+            edge += e;
             break;
         }
     }
     for (unsigned c = 0; c < iw; c++) {
         cv::Mat column = cv::Mat(image, cv::Rect(c, 0, 1, ih));
         cv::Scalar m = cv::mean(column);
-        float e = std::max(std::max(std::max(m[0], m[1]), m[2]), m[3]);
+        float e = abs((m[0] + m[1] + m[2]) / 3 - corners_average);
         if (e != 0) {
             cl = c;
-            edge = edge + e;
+            edge += e;
             break;
         }
     }
     for (int c = iw - 1; c >= 0; c--) {
         cv::Mat column = cv::Mat(image, cv::Rect(c, 0, 1, ih));
         cv::Scalar m = cv::mean(column);
-        float e = std::max(std::max(std::max(m[0], m[1]), m[2]), m[3]);
+        float e = abs((m[0] + m[1] + m[2]) / 3 - corners_average);
         if (e != 0) {
             cr = static_cast<unsigned>(c) + 1;
-            edge = edge + e;
+            edge += e;
             break;
         }
     }
-//    std::cout << "Width: " << cl << "><" << iw - cr << ", height: " << ct << "><" << ih - cb << std::endl;
+    //std::cout << "Width: " << cl << "><" << iw - cr << ", height: " << ct << "><" << ih - cb << std::endl;
     cl = std::min(cl, iw - cr);
     ct = std::min(ct, ih - cb);
+    //std::cout << "edge: " << edge << std::endl;
     if (edge < 20.0) { // 5.0 * [left, right, top, bottom]
-        if (!silent_process) std::cout << "Some borders left (average edges brightness " << edge / 4 << " < 5)." << std::endl;
+        if (!silent_process) std::cout << "Edges are not solid (" << edge / 4 << " < 5), some borders left." << std::endl;
         cl = static_cast<unsigned>(std::max(0, static_cast<int>(cl) - 17));
         ct = static_cast<unsigned>(std::max(0, static_cast<int>(ct) - 17));
     }
-    //if (!silent_process) std::cout << "Horisontal crop: " << cl << ", vertical crop: " << ct << std::endl;
+    //if (!silent_process) std::cout << "Horisontal crop: " << cl << ", vertical crop: " << ct << " (" << iw - cl * 2 << "x" << ih - ct * 2 << ")." << std::endl;
     image = cv::Mat(image, cv::Rect(cl, ct, iw - cl * 2, ih - ct * 2)); //cv::Rect(x,y,width,height)
+    //cv::imwrite(rdr_pThumbnailFile + ".png", image);
 
 
     cv::Size imageSize = image.size();
@@ -237,7 +255,8 @@ drawing_error_msg:
 
 // -----------------------------------------------------------------------------
     unsigned data_pos = 0;
-    //unsigned prev_pos = 0;
+    unsigned w1 = 0;
+    unsigned h1 = 0;
 
 if (drawingType == 1) {
     //.rdr
@@ -271,8 +290,8 @@ if (drawingType == 1) {
         if (data_pos < (drawing_length - sizeof(rdr_data) + 1)) {
             if (memcmp(drawing_buffer + data_pos, &rdr_data, sizeof(rdr_data)) == 0) {
                 if (drawing_buffer[data_pos + sizeof(rdr_data) + 3] == '\4') {
-                    short w1 = *((short*) (drawing_buffer + data_pos - 12));
-                    short h1 = *((short*) (drawing_buffer + data_pos - 10));
+                    w1 = *((short*) (drawing_buffer + data_pos - 12));
+                    h1 = *((short*) (drawing_buffer + data_pos - 10));
                     //if (!silent_process) std::cout << "Canvas size: " << w1 << "x" << h1 << " pixels." << std::endl;
                     if ((h1 == 0) or (w1 == 0)) {
                         std::cout << "\nWarning: zero width or height found." << std::endl;
@@ -317,7 +336,6 @@ if (drawingType == 1) {
 // 01 02? 03? 04 - geerdr, 05 06 - drawinghand
 //                           NN 00 00 00                                     WWWWWWWW HHHHHHHH ff ff ff 00 02 00 00 00 ff ff ff ff 00 ac 5e 00 00 ff ff 00 00 07 00 COpMove ...
 
-    int w1, h1;
     if (memcmp(drawing_buffer + 4, &verHeader, sizeof(verHeader)) == 0) {
         //std::cout << "found VersionX header" << std::endl;
         geeVersion = drawing_buffer[4 + sizeof(verHeader)] - '0'; //ver=8,9,?
@@ -368,8 +386,8 @@ std::cout << "'desc' found, but Version is not 9. Stop." << std::endl;
         }
 
         data_pos = data_pos + 4 + tl;
-        w1 = *((int*) (drawing_buffer + data_pos));
-        h1 = *((int*) (drawing_buffer + data_pos + 4));
+        w1 = *((unsigned*) (drawing_buffer + data_pos));
+        h1 = *((unsigned*) (drawing_buffer + data_pos + 4));
         //if (!silent_process) std::cout << "Canvas size: " << w1 << "x" << h1 << " pixels." << std::endl;
         if ((h1 == 0) or (w1 == 0)) {
             std::cout << "\nWarning: zero width or height found." << std::endl;
@@ -451,5 +469,9 @@ no_gee_sig:
 // - finished ------------------------------------------------------------------
 finish_drawing:
     delete[] drawing_buffer;
+    if ((iw < w1) || (ih < h1)) {
+        std::cout << "\nImage dimensions (" << iw << "x" << ih << ") are smaller than drawing canvas (" << w1 << "x" << h1 << ")."
+                     "\nThe thumbnail in \"" << rdr_pOutputFile << "\" is cropped." << std::endl;
+    }
     return 0;
 }
