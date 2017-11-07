@@ -5,8 +5,8 @@
 IDI_MAINICON ICON "rdr.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,1,0,0
-PRODUCTVERSION 1,1,0,0
+FILEVERSION 1,2,0,0
+PRODUCTVERSION 1,2,0,0
 FILETYPE VFT_APP
 {
     BLOCK "StringFileInfo"
@@ -16,11 +16,11 @@ FILETYPE VFT_APP
             VALUE "CompanyName",      ""
             VALUE "LegalCopyright",   "Public domain."
             VALUE "FileDescription",  "Thumbnail merger for DH drawings"
-            VALUE "FileVersion",      "1.1"
+            VALUE "FileVersion",      "1.2"
             VALUE "InternalName",     "rdr"
             VALUE "OriginalFilename", "rdr.exe"
             VALUE "ProductName",      "dh-thumb"
-            VALUE "ProductVersion",   "1.1"
+            VALUE "ProductVersion",   "1.2"
             VALUE "Comments",         "Drawing Hand Screen Saver:\n"
                                       "http://www.drawinghand.com\n"
                                       "\n"
