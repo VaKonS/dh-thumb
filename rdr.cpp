@@ -12,6 +12,7 @@
 #include <cmath>
 #include <thread>
 #include "tclap/CmdLine.h"
+#include <windows.h>
 
 
 // ----------------------------------------------------------
@@ -44,13 +45,18 @@ unsigned thumb_size;
 int drawingType; // 1 rdr  2 geerdr  3 drawinghand
 int geeVersion; // 1-4 geerdr, 5-9 drawinghand
 int geeSubVersion;
-bool silent_process, force_drawing;
+bool silent_process, force_drawing, use_clipboard;
 std::string rdr_pInputFile, rdr_pThumbnailFile, rdr_pOutputFile, drawingExt;
 std::vector<uchar> jpeg_buff;
 std::ofstream outfile;
 char * drawing_buffer;
 cv::Mat drawing_corners[4];
 cv::Scalar corners_mean;
+cv::Mat image;
+BITMAP bmp;
+//BITMAPFILEHEADER bmph;
+//BITMAPINFO bmi;
+//RGBQUAD bmp_palette[256];
 
 
 // ----------------------------------------------------------
@@ -64,7 +70,7 @@ int main(int argc, char** argv) {
                     "", "string", cmd);
 
     TCLAP::ValueArg<std::string> cmdThumbnailFile("t", "thumbnail",
-                    "Image with rendered drawing.", true,
+                    "Image with rendered drawing.", false,
                     "", "string", cmd);
 
     TCLAP::ValueArg<std::string> cmdOutputFile("o", "output-drawing",
@@ -77,6 +83,10 @@ int main(int argc, char** argv) {
 
     TCLAP::ValueArg<bool> cmdSilent("s", "silent",
                     "Show only errors. [0 = no]", false,
+                    false, "boolean", cmd);
+
+    TCLAP::ValueArg<bool> cmdClipboard("c", "clipboard",
+                    "Import thumbnail from clipboard. [0 = no]", false,
                     false, "boolean", cmd);
 
     // parse command line arguments
@@ -94,14 +104,88 @@ int main(int argc, char** argv) {
     rdr_pOutputFile    = cmdOutputFile.getValue();
     silent_process     = cmdSilent.getValue();
     force_drawing      = cmdForce.getValue();
+    use_clipboard      = cmdClipboard.getValue();
 
+    bool drawing_written = false;
 
-    // load image file
-    if (!silent_process) std::cout << "Reading thumbnail image: \"" << rdr_pThumbnailFile << "\"." << std::endl;
-    cv::Mat image = cv::imread(rdr_pThumbnailFile, cv::IMREAD_COLOR);
-    if (image.data == NULL) {
-        std::cerr << "\ncv::imread : error reading image \"" << rdr_pThumbnailFile << "\"." << std::endl;
-	std::exit(-1);
+    if (use_clipboard) {
+        // importing image from clipboard in RGB32 format
+        if (!silent_process) std::cout << "Importing thumbnail image from clipboard." << std::endl;
+        if (OpenClipboard(0)) {
+            //std::cout << "Clipboard opened." << std::endl;
+            if (IsClipboardFormatAvailable(CF_BITMAP)) {
+                //if (!silent_process) std::cout << "Found image on clipboard." << std::endl;
+                HBITMAP clp_hbmp = (HBITMAP) GetClipboardData(CF_BITMAP);
+                if (clp_hbmp) {
+                    //std::cout << "Got clipboard data." << std::endl;
+                    if (GetObject(clp_hbmp, sizeof(BITMAP), &bmp) == sizeof(BITMAP)) {
+                        //std::cout << "BITMAP.bmType: " << bmp.bmType << std::endl;
+                        //std::cout << "BITMAP.bmWidth: " << bmp.bmWidth << std::endl;
+                        //std::cout << "BITMAP.bmHeight: " << bmp.bmHeight << std::endl;
+                        //std::cout << "BITMAP.bmWidthBytes: " << bmp.bmWidthBytes << std::endl;
+                        //std::cout << "BITMAP.bmPlanes: " << bmp.bmPlanes << std::endl;
+                        //std::cout << "BITMAP.bmBitsPixel: " << bmp.bmBitsPixel << std::endl;
+                        //unsigned bpp = bmp.bmPlanes * bmp.bmBitsPixel;
+                        //std::cout << "bpp: " << bpp << std::endl;
+
+                        const unsigned rgb32_header_size = sizeof(BITMAPFILEHEADER) + sizeof(BITMAPINFOHEADER);
+                        unsigned rgb32_image_size = bmp.bmWidth * bmp.bmHeight << 2;
+                        jpeg_buff.resize(rgb32_header_size + rgb32_image_size);
+                        BITMAPFILEHEADER* pbmph = (BITMAPFILEHEADER*) jpeg_buff.data();
+                        BITMAPINFO* pbmi = (BITMAPINFO*) (jpeg_buff.data() + sizeof(BITMAPFILEHEADER));
+                        pbmph->bfType = 0x4d42; //BM
+                        pbmph->bfSize = rgb32_header_size + rgb32_image_size;
+                        pbmph->bfReserved1 = 0;
+                        pbmph->bfReserved1 = 0;
+                        pbmph->bfOffBits = rgb32_header_size;
+                        pbmi->bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                        pbmi->bmiHeader.biWidth = bmp.bmWidth;
+                        pbmi->bmiHeader.biHeight = bmp.bmHeight;
+                        pbmi->bmiHeader.biPlanes = 1;
+                        pbmi->bmiHeader.biBitCount = 32;
+                        pbmi->bmiHeader.biCompression = BI_RGB;
+                        pbmi->bmiHeader.biSizeImage = rgb32_image_size;
+                        pbmi->bmiHeader.biXPelsPerMeter = 0;
+                        pbmi->bmiHeader.biYPelsPerMeter = 0;
+                        pbmi->bmiHeader.biClrUsed = 0;
+                        pbmi->bmiHeader.biClrImportant = 0;
+                        HDC desktop_hdc = GetDC(HWND_DESKTOP);
+                        if (desktop_hdc) {
+                            //std::cout << "desktop_hdc taken." << std::endl;
+                            //                                                                  V pbmph does not work here (writes 702 zeroes between header and image), why?
+                            int rows_copied = GetDIBits(desktop_hdc, clp_hbmp, 0, bmp.bmHeight, jpeg_buff.data() + rgb32_header_size, pbmi, DIB_RGB_COLORS);
+                            ReleaseDC(HWND_DESKTOP, desktop_hdc); //if (ReleaseDC(HWND_DESKTOP, desktop_hdc) == 1) std::cout << "desktop_hdc released." << std::endl;
+                            //std::cout << rows_copied << " rows copied from clipboard." << std::endl;
+                            if (rows_copied != 0) {
+                                //outfile = std::ofstream("rdr.clp.bmp", std::ofstream::binary); if (!outfile) { std::cerr << "\nError writing \"rdr.clp.bmp\"." << std::endl; std::exit(-1); }; outfile.write (reinterpret_cast<const char*>(jpeg_buff.data()), jpeg_buff.size()); outfile.close();
+                                image = cv::imdecode(jpeg_buff, cv::IMREAD_COLOR);
+                            }
+                        }
+                    }
+                }
+                // Do not close the handle of GetClipboardData, it should be operated by system.
+            }
+            CloseClipboard();
+        }
+        if (image.data == NULL) {
+            std::cerr << "\nError importing image from clipboard.\n"
+                           "Try to copy a screenshot again or use \"-t\" switch." << std::endl;
+	    std::exit(-1);
+        }
+    } else {
+        // loading image file
+        if (rdr_pThumbnailFile.size() == 0) {
+            std::cerr << "\nA thumbnail image is not given. Either:\n"
+                           "- specify an image file with '-t \"image.png\"' switch;\n"
+                           "- or use '-c 1' to paste it from clipboard." << std::endl;
+            std::exit(-1);
+        }
+        if (!silent_process) std::cout << "Reading thumbnail image: \"" << rdr_pThumbnailFile << "\"." << std::endl;
+        image = cv::imread(rdr_pThumbnailFile, cv::IMREAD_COLOR);
+        if (image.data == NULL) {
+            std::cerr << "\ncv::imread : error reading image \"" << rdr_pThumbnailFile << "\"." << std::endl;
+            std::exit(-1);
+        }
     }
 
 
@@ -171,14 +255,14 @@ int main(int argc, char** argv) {
     cl = std::min(cl, iw - cr);
     ct = std::min(ct, ih - cb);
     //std::cout << "edge: " << edge << std::endl;
-    if (edge < 20.0) { // 5.0 * [left, right, top, bottom]
-        if (!silent_process) std::cout << "Edges are not solid (" << edge / 4 << " < 5), some borders left." << std::endl;
+    if (edge < 12.0) { // 3.0 * [left, right, top, bottom]
+        if (!silent_process) std::cout << "Edges are not solid (" << edge / 4 << " < 3), some borders left." << std::endl;
         cl = static_cast<unsigned>(std::max(0, static_cast<int>(cl) - 17));
         ct = static_cast<unsigned>(std::max(0, static_cast<int>(ct) - 17));
     }
     //if (!silent_process) std::cout << "Horisontal crop: " << cl << ", vertical crop: " << ct << " (" << iw - cl * 2 << "x" << ih - ct * 2 << ")." << std::endl;
     image = cv::Mat(image, cv::Rect(cl, ct, iw - cl * 2, ih - ct * 2)); //cv::Rect(x,y,width,height)
-    //cv::imwrite(rdr_pThumbnailFile + ".png", image);
+    //cv::imwrite("rdr.cropped.png", image);
 
 
     cv::Size imageSize = image.size();
@@ -315,6 +399,7 @@ if (drawingType == 1) {
                     outfile.write (reinterpret_cast<const char*>(jpeg_buff.data()), thumb_size);
                     outfile.write (drawing_buffer + data_pos, drawing_length - data_pos);
                     outfile.close();
+                    drawing_written = true;
 
                     goto finish_drawing;
                 }
@@ -381,8 +466,8 @@ std::cout << "'desc' found, but Version is not 9. Stop." << std::endl;
             //    goto finish_drawing;
             //}
         } else {
-            std::cout << "Unknown thumbnail format (" << thumbFmt << ").\nOnly BMP and JPEG are supported. Stop." << std::endl;
-            goto finish_drawing;
+            std::cout << "Unknown thumbnail format (" << thumbFmt << ").\nOnly BMP and JPEG are supported." << std::endl;
+            //goto finish_drawing;
         }
 
         data_pos = data_pos + 4 + tl;
@@ -462,6 +547,7 @@ no_gee_sig:
     outfile.write (reinterpret_cast<const char*>(jpeg_buff.data()), thumb_size);
     outfile.write (drawing_buffer + data_pos, drawing_length - data_pos);
     outfile.close();
+    drawing_written = true;
 
 }
 
@@ -471,7 +557,7 @@ finish_drawing:
     delete[] drawing_buffer;
     if ((iw < w1) || (ih < h1)) {
         std::cout << "\nImage dimensions (" << iw << "x" << ih << ") are smaller than drawing canvas (" << w1 << "x" << h1 << ")."
-                     "\nThe thumbnail in \"" << rdr_pOutputFile << "\" is cropped." << std::endl;
+                     "\nThe thumbnail in \"" << rdr_pOutputFile << "\" " << (drawing_written ? "is" : "would be") << " cropped." << std::endl;
     }
     return 0;
 }
