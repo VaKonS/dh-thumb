@@ -67,9 +67,6 @@ const char  dhc_config5[]   = {'\x00','\xff','\xff','\xff','\xff','\x00',
                                '\xbc','\x9d','\x21','\x5a','\x00','\x00','\x00','\x00',
                                '\x01','\x00','\x00','\x00','\x01','\x00','\x00','\x00'}; // install/configure dates?
 
-char * drawing_buffer = NULL;
-char * config_dat_buffer = NULL;
-
 //keys to send to screensaver
 struct FIXED_KEYBD_INPUT {
     const DWORD type;
@@ -101,7 +98,7 @@ int geeSubVersion;
 bool silent_process, force_drawing, use_clipboard, batch, dh_interrupted;
 int dh_is_running;
 std::string rdr_pInputFile, rdr_pThumbnailFile, rdr_pOutputFile, drawingExt;
-std::vector<uchar> jpeg_buff, screen_buff;
+std::vector<uchar> jpeg_buff, screen_buff, drawing_buffer, config_dat_buffer;
 std::ofstream outfile;
 cv::Mat drawing_corners[4];
 cv::Scalar corners_mean;
@@ -112,7 +109,12 @@ char path_buf[20480];
 
 
 // ----------------------------------------------------------
-void safe_delete_char(char** p) {if (p != NULL) {delete[] p; p = NULL;}}
+void clear_all() {
+    screen_buff.clear();
+    jpeg_buff.clear();
+    drawing_buffer.clear();
+    config_dat_buffer.clear();
+}
 
 size_t path_length(std::string i) { // drive's "current directory" (i. e. "a:" without slash) will not be found
     size_t s = i.find_last_of('/');
@@ -127,8 +129,7 @@ std::string ShortPath(std::string pn) {
     std::string p = pn.substr(0, path_length(pn));
     if (GetShortPathNameA(p.c_str(), (LPSTR) &path_buf, sizeof(path_buf)) > sizeof(path_buf)) { //(lpszLongPath,lpszShortPath,cchBuffer)
         std::cerr << "Path buffer is too small." << std::endl;
-        safe_delete_char(&drawing_buffer);
-        safe_delete_char(&config_dat_buffer);
+        clear_all();
 	std::exit(-1);
     }
     return std::string(path_buf);
@@ -165,7 +166,7 @@ void dh_run() {
 int main(int argc, char** argv) {
 
     // definition of command line arguments
-    TCLAP::CmdLine cmd("dh-thumb", ' ', "1.4");
+    TCLAP::CmdLine cmd("dh-thumb", ' ', "1.41");
 
     TCLAP::ValueArg<std::string> cmdInputFile("i", "input-drawing",
                     "Original drawing filename.", true,
@@ -202,7 +203,7 @@ int main(int argc, char** argv) {
     } catch (std::exception &e) {
 	std::cerr << e.what() << std::endl;
         std::cerr << "Error : cmd.parse() threw exception" << std::endl;
-	std::exit(-1);
+        return -1;
     }
 
     // command line accepted, begin console processing
@@ -224,7 +225,7 @@ int main(int argc, char** argv) {
     if (InputExtPos == std::string::npos) {
 err_unknown_extension:
         std::cerr << "\nUnknown extension of \"" << rdr_pInputFile << "\".\nValid are .rdr, .geerdr, .drawinghand" << std::endl;
-	std::exit(-1);
+        return -1;
     } else {
         drawingExt.erase(0, InputExtPos);
         InputExtPos = rdr_pInputFile.size() - drawingExt.size();
@@ -247,7 +248,7 @@ err_unknown_extension:
     if (!drawing) {
 drawing_error_msg:
         std::cerr << "\nError opening the drawing \"" << rdr_pInputFile << "\"." << std::endl;
-	std::exit(-1);
+        return -1;
     }
     drawing.seekg (0, drawing.end); // get length of drawing file
     int drawing_length = drawing.tellg();
@@ -256,8 +257,8 @@ drawing_error_msg:
         goto drawing_error_msg;
     }
     drawing.seekg (0, drawing.beg);
-    drawing_buffer = new char [drawing_length]; // allocate memory
-    drawing.read (drawing_buffer, drawing_length); // read data as a block
+    drawing_buffer.resize(drawing_length); // allocate memory
+    drawing.read (reinterpret_cast<char*>(drawing_buffer.data()), drawing_length); // read data as a block
     drawing.close();
 
 
@@ -277,9 +278,8 @@ drawing_error_msg:
         image = cv::imread(rdr_pThumbnailFile, cv::IMREAD_COLOR);
         if (image.data == NULL) {
             std::cerr << "\ncv::imread : error reading image \"" << rdr_pThumbnailFile << "\"." << std::endl;
-            safe_delete_char(&drawing_buffer);
-            safe_delete_char(&config_dat_buffer);
-            std::exit(-1);
+            clear_all();
+            return -1;
         }
     } else if (use_clipboard) {
         // importing image from clipboard in RGB32 format
@@ -330,7 +330,7 @@ drawing_error_msg:
                             ReleaseDC(HWND_DESKTOP, desktop_hdc); //if (ReleaseDC(HWND_DESKTOP, desktop_hdc) == 1) std::cout << "desktop_hdc released." << std::endl;
                             //std::cout << rows_copied << " rows copied from clipboard." << std::endl;
                             if (rows_copied != 0) {
-                                //outfile = std::ofstream("rdr.clp.bmp", std::ofstream::binary); if (!outfile) { std::cerr << "\nError writing \"rdr.clp.bmp\"." << std::endl; std::exit(-1); }; outfile.write (reinterpret_cast<const char*>(jpeg_buff.data()), jpeg_buff.size()); outfile.close();
+                                //outfile = std::ofstream("rdr.clp.bmp", std::ofstream::binary); if (!outfile) { std::cerr << "\nError writing \"rdr.clp.bmp\"." << std::endl; clear_all(); return -1; }; outfile.write (reinterpret_cast<const char*>(jpeg_buff.data()), jpeg_buff.size()); outfile.close();
                                 image = cv::imdecode(jpeg_buff, cv::IMREAD_COLOR);
                             }
                         }
@@ -343,7 +343,8 @@ drawing_error_msg:
         if (image.data == NULL) {
             std::cerr << "\nError importing image from clipboard.\n"
                            "Try to copy a screenshot again or use \"-t\" switch." << std::endl;
-	    std::exit(-1);
+            clear_all();
+            return -1;
         }
     } else {
         // capturing the drawing
@@ -354,10 +355,10 @@ drawing_error_msg:
         outfile = std::ofstream(dhc_path + dh_temp_drawing, std::ofstream::binary);
         if (!outfile) {
             std::cerr << "\nError writing \"" << dhc_path + dh_temp_drawing << "\"." << std::endl;
-            safe_delete_char(&drawing_buffer);
-           std::exit(-1);
+            clear_all();
+            return -1;
         }
-        outfile.write (drawing_buffer, drawing_length);
+        outfile.write (reinterpret_cast<const char*>(drawing_buffer.data()), drawing_length);
         outfile.close();
         // ---------------------------------------------------------------------
         // backuping configuration file
@@ -370,8 +371,8 @@ drawing_error_msg:
             if (!old_config_dat) {
 old_config_error_msg:
                 std::cerr << "\nError reading \"" << dhc_config_dat << "\"." << std::endl;
-                safe_delete_char(&drawing_buffer);
-                std::exit(-1);
+                clear_all();
+                return -1;
             }
             old_config_dat.seekg (0, old_config_dat.end); // get length
             old_config_length = old_config_dat.tellg();
@@ -380,19 +381,18 @@ old_config_error_msg:
                 goto old_config_error_msg;
             }
             old_config_dat.seekg (0, old_config_dat.beg);
-            config_dat_buffer = new char [old_config_length]; // allocate memory
-            old_config_dat.read (config_dat_buffer, old_config_length);
+            config_dat_buffer.resize(old_config_length); // allocate memory
+            old_config_dat.read (reinterpret_cast<char*>(config_dat_buffer.data()), old_config_length);
             old_config_dat.close();
 
             if (!silent_process) std::cout << "Writing \"" << outPath << dhc_config_backup << "\"." << std::endl;
             outfile = std::ofstream(outPath + dhc_config_backup, std::ofstream::binary);
             if (!outfile) {
                 std::cerr << "\nError writing " << dhc_config_backup << "." << std::endl;
-                safe_delete_char(&drawing_buffer);
-                safe_delete_char(&config_dat_buffer);
-                std::exit(-1);
+                clear_all();
+                return -1;
             }
-            outfile.write (config_dat_buffer, old_config_length);
+            outfile.write (reinterpret_cast<const char*>(config_dat_buffer.data()), old_config_length);
             outfile.close();
         }
         // ---------------------------------------------------------------------
@@ -402,9 +402,8 @@ old_config_error_msg:
         outfile = std::ofstream(dhc_config_dat, std::ofstream::binary);
         if (!outfile) {
             std::cerr << "\nError writing temporary \"" << dhc_config_dat << "\"." << std::endl;
-            safe_delete_char(&drawing_buffer);
-            safe_delete_char(&config_dat_buffer);
-            std::exit(-1);
+            clear_all();
+            return -1;
         }
         outfile.write (&dhc_config1[0], sizeof(dhc_config1));
         outfile.write (reinterpret_cast<const char*>(&dhc_delay), 4);
@@ -441,9 +440,8 @@ old_config_error_msg:
             } else if (dh_is_running == 1) {
                 std::cerr << "Screensaver seems to be running, wrong window class?" << std::endl;
             }
-            safe_delete_char(&drawing_buffer);
-            safe_delete_char(&config_dat_buffer);
-            std::exit(-1);
+            clear_all();
+            return -1;
         } else {
             //if (!silent_process) std::cout << "Detected a screensaver after " << ((cv::getTickCount() - dh_wait_end) / cv::getTickFrequency() + dh_wait) << " seconds, waiting for it to finish." << std::endl;
             //if (!silent_process) std::cout << "Getting screenshot." << std::endl;
@@ -491,7 +489,7 @@ old_config_error_msg:
                             pbmi->bmiHeader.biClrImportant = 0;
                             //int rows_copied =
                             GetDIBits(compatDC, bm, 0, sh, jpeg_buff.data() + rgb32_header_size, pbmi, DIB_RGB_COLORS);
-                            //if (rows_copied != 0) { outfile = std::ofstream("scr" + std::to_string(scr_num) + ".bmp", std::ofstream::binary); if (!outfile) { std::cerr << "\nError writing \"rdr.clp.bmp\"." << std::endl; std::exit(-1); }; outfile.write (reinterpret_cast<const char*>(jpeg_buff.data()), jpeg_buff.size()); outfile.close(); scr_num++; };
+                            //if (rows_copied != 0) { outfile = std::ofstream("scr" + std::to_string(scr_num) + ".bmp", std::ofstream::binary); if (!outfile) { std::cerr << "\nError writing \"rdr.clp.bmp\"." << std::endl; clear_all(); return -1; }; outfile.write (reinterpret_cast<const char*>(jpeg_buff.data()), jpeg_buff.size()); outfile.close(); scr_num++; };
                             SelectObject(compatDC, previous_object);
                             DeleteDC(compatDC);
                         }
@@ -575,18 +573,17 @@ temp_cleanup:
             outfile = std::ofstream(dhc_config_dat, std::ofstream::binary);
             if (!outfile) {
                 std::cerr << "\nError restoring \"" << dhc_config_dat << "\"." << std::endl;
-                safe_delete_char(&drawing_buffer);
-                safe_delete_char(&config_dat_buffer);
-                std::exit(-1);
+                clear_all();
+                return -1;
             }
-            outfile.write (config_dat_buffer, old_config_length);
+            outfile.write (reinterpret_cast<const char*>(config_dat_buffer.data()), old_config_length);
             outfile.close();
         }
-        safe_delete_char(&config_dat_buffer);
+        config_dat_buffer.clear();
         if (dh_interrupted) {
             std::cerr << "\nThe process was interrupted, screenshot is not taken.\nStop." << std::endl;
-            safe_delete_char(&drawing_buffer);
-            std::exit(-1);
+            clear_all();
+            return -1;
         }
     }
 
@@ -717,18 +714,18 @@ if (drawingType == 1) {
 // 2f 00 01 00 00 00 01 00 00 00 00 00 00 00 LLLLLLLL jpeg NN NN WWWW HHHH NN NN NN NN NN NN NN NN 00 03 00 01 palette 04 ...
 
     unsigned tl;
-    if (memcmp(drawing_buffer, &rdr_new_header, sizeof(rdr_new_header)) == 0) {
-        tl = *((unsigned*) (drawing_buffer + sizeof(rdr_new_header)));
+    if (memcmp(drawing_buffer.data(), &rdr_new_header, sizeof(rdr_new_header)) == 0) {
+        tl = *((unsigned*) (drawing_buffer.data() + sizeof(rdr_new_header)));
         // std::cout << "thumbnail length = " << tl << std::endl;
         data_pos = data_pos + sizeof(rdr_new_header) + 4 + tl + 14;
         if (data_pos + sizeof(rdr_data) + 4 < static_cast<unsigned>(drawing_length)) {
-            if (memcmp(drawing_buffer + data_pos, &rdr_data, sizeof(rdr_data)) == 0) {
+            if (memcmp(drawing_buffer.data() + data_pos, &rdr_data, sizeof(rdr_data)) == 0) {
                 if (drawing_buffer[data_pos + sizeof(rdr_data) + 3] == '\4') {
                     if (!force_drawing || !silent_process)
                         std::cout << "The drawing \"" << rdr_pInputFile << "\" already contains thumbnail (" << tl << " bytes)." << std::endl;
                     if (!force_drawing) {
                         std::cout << "Skipped." << std::endl;
-                        goto finish_drawing;
+                        goto finish_drawing1;
                     }
                 }
             }
@@ -739,12 +736,12 @@ if (drawingType == 1) {
     // tl = search limit
     tl = std::min(tl + 1000000, static_cast<unsigned>(drawing_length) - sizeof(rdr_data));
     while (data_pos <= tl) {
-        data_pos = std::find(drawing_buffer + data_pos, drawing_buffer + drawing_length - sizeof(rdr_data) + 1, rdr_data[0]) - drawing_buffer;
+        data_pos = std::find(drawing_buffer.data() + data_pos, drawing_buffer.data() + drawing_length - sizeof(rdr_data) + 1, rdr_data[0]) - drawing_buffer.data();
         if (data_pos < (drawing_length - sizeof(rdr_data) + 1)) {
-            if (memcmp(drawing_buffer + data_pos, &rdr_data, sizeof(rdr_data)) == 0) {
+            if (memcmp(drawing_buffer.data() + data_pos, &rdr_data, sizeof(rdr_data)) == 0) {
                 if (drawing_buffer[data_pos + sizeof(rdr_data) + 3] == '\4') {
-                    w1 = *((short*) (drawing_buffer + data_pos - 12));
-                    h1 = *((short*) (drawing_buffer + data_pos - 10));
+                    w1 = *((short*) (drawing_buffer.data() + data_pos - 12));
+                    h1 = *((short*) (drawing_buffer.data() + data_pos - 10));
                     //if (!silent_process) std::cout << "Canvas size: " << w1 << "x" << h1 << " pixels." << std::endl;
                     if ((h1 == 0) or (w1 == 0)) {
                         std::cout << "\nWarning: zero width or height found." << std::endl;
@@ -759,18 +756,17 @@ if (drawingType == 1) {
                     if (!silent_process) std::cout << "Writing new RDR drawing: \"" << rdr_pOutputFile << "\"." << std::endl;
                     outfile = std::ofstream(rdr_pOutputFile, std::ofstream::binary);
                     if (!outfile) {
-                        safe_delete_char(&drawing_buffer);
                         std::cerr << "\nError writing the drawing \"" << rdr_pOutputFile << "\"." << std::endl;
-	                std::exit(-1);
+                        clear_all();
+                        return -1;
                     }
                     outfile.write (&rdr_new_header[0], sizeof(rdr_new_header));
                     outfile.write (reinterpret_cast<const char*>(&thumb_size), 4);
                     outfile.write (reinterpret_cast<const char*>(jpeg_buff.data()), thumb_size);
-                    outfile.write (drawing_buffer + data_pos, drawing_length - data_pos);
+                    outfile.write (reinterpret_cast<const char*>(drawing_buffer.data() + data_pos), drawing_length - data_pos);
                     outfile.close();
                     drawing_written = true;
-
-                    goto finish_drawing;
+                    goto finish_drawing1;
                 }
             } else
                 data_pos++;
@@ -780,6 +776,12 @@ if (drawingType == 1) {
     }
 
     std::cout << "\nDrawing data is not found in \"" << rdr_pInputFile << "\".\nCan not make valid drawing file." << std::endl;
+    clear_all();
+    return -1;
+
+finish_drawing1:
+    clear_all(); //nop
+    //goto finish_drawing;
 
 } else if( (drawingType == 3) || (drawingType == 2) ){
     //.drawinghand, .geerdr
@@ -790,58 +792,48 @@ if (drawingType == 1) {
 // 01 02? 03? 04 - geerdr, 05 06 - drawinghand
 //                           NN 00 00 00                                     WWWWWWWW HHHHHHHH ff ff ff 00 02 00 00 00 ff ff ff ff 00 ac 5e 00 00 ff ff 00 00 07 00 COpMove ...
 
-    if (memcmp(drawing_buffer + 4, &verHeader, sizeof(verHeader)) == 0) {
+    int geeVersionL = 0;
+    if (memcmp(drawing_buffer.data() + 4, &verHeader, sizeof(verHeader)) == 0) {
         //std::cout << "found VersionX header" << std::endl;
         geeVersion = drawing_buffer[4 + sizeof(verHeader)] - '0'; //ver=8,9,?
         //if (!silent_process) std::cout << "Geerdr version: " << geeVersion << std::endl;
-        if (drawing_buffer[0] == geeVersion) {
-            //std::cout << "Header matches geeVersion." << std::endl;
-        } else {
-std::cout << "Header version does not match 'Version'. Stop." << std::endl;
-            goto finish_drawing;
+        if (drawing_buffer[0] != geeVersion) {
+            std::cout << "Header version does not match 'Version'. Stop." << std::endl;
+            clear_all();
+            return -1;
         }
         if (geeVersion == 7) {
-            // Version 7 seems to not support thumbnails, changing to version 8, subversion 7.
+            // Version 7 doesn't seem to not support thumbnails, changing to version 8, subversion 7.
             geeVersion = 8;
             geeSubVersion = 7;
             data_pos = 13;
             goto headerless_geerdr;
         }
-        geeSubVersion = *((int*)(drawing_buffer + 13));
+        geeSubVersion = *((int*)(drawing_buffer.data() + 13));
         //if (!silent_process) std::cout << "Geerdr subversion: " << geeSubVersion << std::endl;
         data_pos = 22;
-        if (memcmp(drawing_buffer + 21, &ver9desc, sizeof(ver9desc)) == 0) {
+        if (memcmp(drawing_buffer.data() + 21, &ver9desc, sizeof(ver9desc)) == 0) {
             if (geeVersion != 9) {
-std::cout << "'desc' found, but Version is not 9. Stop." << std::endl;
-                goto finish_drawing;
+                std::cout << "'desc' found, but Version is not 9. Stop." << std::endl;
+                clear_all();
+                return -1;
             }
             data_pos = data_pos + 4;
         }
-        unsigned tl = *((unsigned*)(drawing_buffer + data_pos));
+        unsigned tl = *((unsigned*)(drawing_buffer.data() + data_pos));
         //std::cout << "Thumbnail length: " << tl << " bytes." << std::endl;
 
         // checking thumbnail format
-        short thumbFmt = *((short*)(drawing_buffer + data_pos + 4));
-        if (thumbFmt == 0x4d42) { // "BM" - bmp thumbnail
-            //if (!silent_process) std::cout << "BMP thumbnail." << std::endl;
-            //if (geeVersion != 9) {
-            //    //std::cout << "geeVersion is not 9, but thumbnail is BMP! Stop." << std::endl;
-            //    goto finish_drawing;
-            //}
-        } else if (thumbFmt == -9985) { // 0xd8ff - jpeg thumbnail
-            //if (!silent_process) std::cout << "JPEG thumbnail." << std::endl;
-            //if (geeVersion == 9) {
-            //    std::cout << "JPEG thumbnail in Version9! Stop." << std::endl;
-            //    goto finish_drawing;
-            //}
-        } else {
-            std::cout << "Unknown thumbnail format (" << thumbFmt << ").\nOnly BMP and JPEG are supported." << std::endl;
-            //goto finish_drawing;
+        short thumbFmt = *((short*)(drawing_buffer.data() + data_pos + 4));
+        if ((thumbFmt != 0x4d42) && (thumbFmt != -9985)) { // "BM" - bmp thumbnail, 0xd8ff - jpeg thumbnail
+            std::cerr << "Warning: unknown thumbnail format (" << thumbFmt << ").\nOnly BMP and JPEG are supported." << std::endl;
+            //clear_all();
+            //return -1;
         }
 
         data_pos = data_pos + 4 + tl;
-        w1 = *((unsigned*) (drawing_buffer + data_pos));
-        h1 = *((unsigned*) (drawing_buffer + data_pos + 4));
+        w1 = *((unsigned*) (drawing_buffer.data() + data_pos));
+        h1 = *((unsigned*) (drawing_buffer.data() + data_pos + 4));
         //if (!silent_process) std::cout << "Canvas size: " << w1 << "x" << h1 << " pixels." << std::endl;
         if ((h1 == 0) or (w1 == 0)) {
             std::cout << "\nWarning: zero width or height found." << std::endl;
@@ -851,24 +843,24 @@ std::cout << "'desc' found, but Version is not 9. Stop." << std::endl;
                 std::cout << "Is \"" << rdr_pInputFile << "\" really a drawing?" << std::endl;
             }
         }
-        if (memcmp(drawing_buffer + data_pos + 29, &geeSignature, sizeof(geeSignature)) == 0) {
+        if (memcmp(drawing_buffer.data() + data_pos + 29, &geeSignature, sizeof(geeSignature)) == 0) {
             //std::cout << "geeSignature found." << std::endl;
             if (!force_drawing || !silent_process)
                 std::cout << "The drawing \"" << rdr_pInputFile << "\" already contains thumbnail (" << tl << " bytes)." << std::endl;
             if (!force_drawing) {
                 std::cout << "Skipped." << std::endl;
-                goto finish_drawing;
+                goto finish_drawing2;
             }
         } else
             goto no_gee_sig;
     } else { // no "VersionX" header - versions 1...6, changing to version 8, subversion N
         geeVersion = 8;
-        geeSubVersion = *((int*) drawing_buffer);
+        geeSubVersion = *((int*) drawing_buffer.data());
         data_pos = 4;
 headerless_geerdr:
         //if (!silent_process) std::cout << "No thumbnail." << std::endl;
-        w1 = *((int*) (drawing_buffer + data_pos));
-        h1 = *((int*) (drawing_buffer + data_pos + 4));
+        w1 = *((int*) (drawing_buffer.data() + data_pos));
+        h1 = *((int*) (drawing_buffer.data() + data_pos + 4));
         //if (!silent_process) std::cout << "Canvas size: " << w1 << "x" << h1 << " pixels." << std::endl;
         if ((h1 == 0) or (w1 == 0)) {
             std::cout << "\nWarning: zero width or height found." << std::endl;
@@ -878,10 +870,11 @@ headerless_geerdr:
                 std::cout << "Is \"" << rdr_pInputFile << "\" really a drawing?" << std::endl;
             }
         }
-        if (memcmp(drawing_buffer + data_pos + 29, &geeSignature, sizeof(geeSignature)) != 0) {
+        if (memcmp(drawing_buffer.data() + data_pos + 29, &geeSignature, sizeof(geeSignature)) != 0) {
 no_gee_sig:
             std::cout << "\nDrawing data is not found in \"" << rdr_pInputFile << "\".\nCan not make valid drawing file." << std::endl;
-            goto finish_drawing;
+            clear_all();
+            return -1;
         } //else {
          //   std::cout << "geeSignature found." << std::endl;
         //}
@@ -889,19 +882,20 @@ no_gee_sig:
 
     if ( (geeVersion != 8) and (geeVersion != 9) ) {
         std::cout << "\n'Version' is not 8 or 9. Stop." << std::endl;
-        goto finish_drawing;
+        clear_all();
+        return -1;
     }
 
     if (!silent_process) std::cout << "Writing new drawing: \"" << rdr_pOutputFile << "\"." << std::endl;
     outfile = std::ofstream(rdr_pOutputFile, std::ofstream::binary);
     if (!outfile) {
-        safe_delete_char(&drawing_buffer);
         std::cerr << "\nError writing the drawing \"" << rdr_pOutputFile << "\"." << std::endl;
-	std::exit(-1);
+        clear_all();
+        return -1;
     }
     outfile.write (reinterpret_cast<const char*>(&geeVersion), 4);
     outfile.write (&verHeader[0], sizeof(verHeader));
-    int geeVersionL = geeVersion + '0';
+    geeVersionL = geeVersion + '0';
     outfile.write (reinterpret_cast<const char*>(&geeVersionL), 1);
     outfile.write (reinterpret_cast<const char*>(&geeSubVersion), 4);
     geeVersionL = 1;
@@ -914,20 +908,20 @@ no_gee_sig:
     }
     outfile.write (reinterpret_cast<const char*>(&thumb_size), 4);
     outfile.write (reinterpret_cast<const char*>(jpeg_buff.data()), thumb_size);
-    outfile.write (drawing_buffer + data_pos, drawing_length - data_pos);
+    outfile.write (reinterpret_cast<const char*>(drawing_buffer.data() + data_pos), drawing_length - data_pos);
     outfile.close();
     drawing_written = true;
 
+finish_drawing2:
+    clear_all(); //nop
 }
 
 
 // - finished ------------------------------------------------------------------
-finish_drawing:
-    safe_delete_char(&drawing_buffer);
-    safe_delete_char(&config_dat_buffer);
     if ((iw < w1) || (ih < h1)) {
         std::cout << "\nImage dimensions (" << iw << "x" << ih << ") are smaller than drawing canvas (" << w1 << "x" << h1 << ")."
                      "\nThe thumbnail in \"" << rdr_pOutputFile << "\" " << (drawing_written ? "is" : "would be") << " cropped." << std::endl;
     }
+    clear_all();
     return 0;
 }
