@@ -8,31 +8,64 @@ To compile, you'll need [OpenCV](https://github.com/opencv/opencv) and [TCLAP](h
 
 ---
 ## Usage:
-1. Run the Drawing Hand screensaver, when drawing is finished, press "Print Screen" button.<br>
-Run:<br>
-`rdr.exe -i "original.geerdr" -c 1`<br>
-This will take the screenshot from clipboard.
-2. Or you can paste the screenshot into some graphical program, i. e. MS Paint, and save it to "rendered_image.png".<br>
-Acceptable formats are PNG, BMP, TIFF and some other.<br>
-*Do not use JPEG and other lossy formats, because they will not be cropped properly.*<br>
-Then run:<br>
-`rdr.exe -i "original.drawinghand" -t "rendered_image.png"`<br>
+<br>
+`rdr.exe -i "original.geerdr"`<br>
+This will try to run the screensaver, to render the drawing, and should make "original.thumb.geerdr" drawing, containing thumbnail.<br>
+The program is tested with DH v2015.<br>
+<br>
+Options:<br>
+<br>
+-o&nbsp;"drawing.geerdr"<br>
+Output drawing name; the backup of configuration will be written to this foloder too;<br>
+<br>
+-t&nbsp;"image.png"<br>
+Image with thumbnail (BMP/PNG/TIFF); when thumbnail is loaded from image/clipboard, the DH screensaver is not needed;<br>
+<br>
+-c&nbsp;1<br>
+Paste thumbnail from clipboard;<br>
+<br>
+-s&nbsp;1<br>
+Show only errors;<br>
+<br>
+-f&nbsp;1<br>
+Process files even if they already contain drawings;<br>
+<br>
+-b&nbsp;1<br>
+Do not backup/restore DH's "config.dat". <b>Backup manually in that case, or settings will be broken!</b><br>
 <br>
 Supported drawings formats are "*.rdr", "*.geerdr" and "*.drawinghand".
 
 ---
 ## По-русски (in Russian):
 Программа предназначена для вставки миниатюр в рисунки для хранителя экрана "Drawing Hand" (у многих старых рисунков они отсутствуют).<br>
-Для этого можно:
-1) Сделать снимок экрана клавишей "Print Screen" и запустить:<br>
-`rdr.exe -i "оригинал.geerdr" -c 1`<br>
-Картинка будет вставлена из буфера обмена.
-2) Либо сохранить снимок экрана в файл PNG/BMP/TIFF.<br>
-*Не сохраняйте в формат с потерями (JPEG и т. п.)&nbsp;– не сработает авто-обрезка.*<br>
-Запустить:<br>
-`rdr.exe -i "оригинал.drawinghand" -t "скриншот.png"`<br>
 <br>
-Поддерживаются форматы рисунков "*.rdr", "*.geerdr" и "*.drawinghand".
+Для этого можно запустить:<br>
+`rdr.exe -i "оригинальный_рисунок.geerdr"`<br>
+<br>
+Программа попытается вызвать хранитель экрана и сделать рисунок "оригинальный_рисунок.thumb.geerdr", содержащий миниатюру.<br>
+Проверялась с DH v2015.<br>
+<br>
+Настройки:<br>
+<br>
+-o&nbsp;"новый_рисунок.geerdr"<br>
+Задать имя нового рисунка; в папку с ним также будет резервироваться файл настроек DH "config.dat";<br>
+<br>
+-t&nbsp;"миниатюра.png"<br>
+Изображение с законченным рисунком (BMP/PNG/TIFF); если указано, хранитель экрана не запускается и не требуется;<br>
+<br>
+-c&nbsp;1<br>
+Вставить миниатюру, предварительно скопированную в буфер обмена;<br>
+<br>
+-s&nbsp;1<br>
+Не писать в консоль ничего, кроме сообщений об ошибках;<br>
+<br>
+-f&nbsp;1<br>
+Делать новые рисунки, даже если старые уже содержат миниатюры;<br>
+<br>
+-b&nbsp;1<br>
+Не резервировать файл конфигурации. В этом случае сделайте копию настроек вручную, <b>файл с настройками будет повреждён!</b><br>
+<br>
+Поддерживаются форматы рисунков "\*.rdr", "\*.geerdr" и "\*.drawinghand".
 
 ---
 ![Resulting thumbnail](https://github.com/VaKonS/dh-thumb/raw/master/admir.gif)
