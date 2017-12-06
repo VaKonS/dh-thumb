@@ -97,7 +97,7 @@ int geeVersion; // 1-4 geerdr, 5-9 drawinghand
 int geeSubVersion;
 bool silent_process, force_drawing, use_clipboard, batch, dh_interrupted;
 int dh_is_running;
-std::string rdr_pInputFile, rdr_pThumbnailFile, rdr_pOutputFile, drawingExt;
+std::string rdr_pInputFile, rdr_pThumbnailFile, rdr_pOutputFile, drawingExt, exportExt;
 std::vector<uchar> jpeg_buff, screen_buff, drawing_buffer, config_dat_buffer;
 std::ofstream outfile;
 cv::Mat drawing_corners[4];
@@ -204,6 +204,12 @@ int main(int argc, char** argv) {
                     "(Backup and restore manually or delete config.dat, because it will be broken!) [0 = no]", false,
                     false, "boolean", cmd);
 
+    TCLAP::ValueArg<std::string> cmdThumbnailExport("x", "extension",
+                    "Save cropped thumbnail to \"name.thumb.rgd.extension\".\n"
+                    "Useful for checking thumbnail images.\n"
+                    "Possible extensions are: png, bmp, tif etc.", false,
+                    "", "string", cmd);
+
     // parse command line arguments
     try {
        	cmd.parse(argc, argv);
@@ -222,6 +228,7 @@ int main(int argc, char** argv) {
     use_clipboard      = cmdClipboard.getValue();
     batch              = cmdBatch.getValue();
     dhc_path           = ShortPath(trailSlash(cmdDHdir.getValue()));
+    exportExt          = cmdThumbnailExport.getValue();
 
 
 // -----------------------------------------------------------------------------
@@ -627,10 +634,11 @@ temp_cleanup:
     float edge = 0;
 
     // cv::Vec3f image.at(ih-1,iw-1) crashes, therefore using cv::Mat
-    drawing_corners[0] = cv::Mat(image, cv::Rect(0, 0, 1, 1)); //cv::Rect(x,y,width,height)
-    drawing_corners[1] = cv::Mat(image, cv::Rect(iw - 1, 0, 1, 1));
-    drawing_corners[2] = cv::Mat(image, cv::Rect(0, ih - 1, 1, 1));
-    drawing_corners[3] = cv::Mat(image, cv::Rect(iw - 1, ih - 1, 1, 1));
+    cv::Mat(image, cv::Rect(     0,      0, 1, 1)).convertTo(drawing_corners[0], CV_32F); //cv::Rect(x,y,width,height)
+    cv::Mat(image, cv::Rect(iw - 1,      0, 1, 1)).convertTo(drawing_corners[1], CV_32F);
+    cv::Mat(image, cv::Rect(     0, ih - 1, 1, 1)).convertTo(drawing_corners[2], CV_32F);
+    cv::Mat(image, cv::Rect(iw - 1, ih - 1, 1, 1)).convertTo(drawing_corners[3], CV_32F);
+    //std::cout << "corners: " << drawing_corners[0] << drawing_corners[1] << drawing_corners[2] << drawing_corners[3] << std::endl;
     corners_mean = cv::mean((drawing_corners[0] +
                              drawing_corners[1] +
                              drawing_corners[2] +
@@ -691,7 +699,13 @@ temp_cleanup:
     //if (!silent_process) std::cout << "Horisontal crop: " << cl << ", vertical crop: " << ct << " (" << iw - cl * 2 << "x" << ih - ct * 2 << ")." << std::endl;
     image = cv::Mat(image, cv::Rect(cl, ct, iw - cl * 2, ih - ct * 2)); //cv::Rect(x,y,width,height)
 
-//cv::imwrite("screen.cropped.png", image);
+    if (exportExt.size() != 0) {
+        std::string ThumbPreview = rdr_pOutputFile;
+        if (exportExt[0] != '.') ThumbPreview += ".";
+        ThumbPreview += exportExt;
+        if (!silent_process) std::cout << "Writing cropped image: \"" << ThumbPreview << "\"." << std::endl;
+        if (!cv::imwrite(ThumbPreview, image)) std::cerr << "\nError saving cropped image \"" << ThumbPreview << "\". Please check that it's not write-protected." << std::endl;
+    }
 
 
     cv::Size imageSize = image.size();
