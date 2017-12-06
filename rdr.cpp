@@ -48,7 +48,7 @@ const char  dhc_config1[]   = {'\x03','\x00','\x00','\x00'};
 unsigned    dhc_delay       = 100;                                                       // dd delay between drawings in seconds
 const char  dhc_config2[]   = {'\x01','\x00','\x00','\x00','\x00','\x00','\x00','\x00'};
 unsigned    dhc_path_length = 15;                                                        // db path length
-std::string dhc_path        = "c:\\DrawingHand\\";                                       // char[] Drawing Hand path
+std::string dhc_path; //        = "c:\\DrawingHand\\";                                       // char[] Drawing Hand path
 const char  dhc_config3[]   = {'\x0a','\x00','\x00','\x00',
                                '\x00','\x00','\x00','\x00','\x00','\x00','\x00','\x00',
                                '\x01','\x00','\x00','\x00','\x01','\x00','\x00','\x00'};
@@ -173,8 +173,18 @@ int main(int argc, char** argv) {
                     "", "string", cmd);
 
     TCLAP::ValueArg<std::string> cmdOutputFile("o", "output-drawing",
-                    "Output drawing (\"name.thumb.ext\" by default).", false,
+                    "Output drawing (\"name.thumb.extension\" by default).\n"
+                    "Backup of DH configuration, if used, will be written to this drawing's location too.", false,
                     "", "string", cmd);
+
+    TCLAP::ValueArg<std::string> cmdThumbnailFile("t", "thumbnail",
+                    "Load drawing image from file.", false,
+                    "", "string", cmd);
+
+    TCLAP::ValueArg<bool> cmdClipboard("c", "clipboard",
+                    "Import drawing image from clipboard. [0 = no]\n"
+                    "If none of '-t' and '-c 1' are used, program will try to run the screensaver.", false,
+                    false, "boolean", cmd);
 
     TCLAP::ValueArg<bool> cmdForce("f", "force",
                     "Create new drawing even if thumbnail is already present in old one. [0 = no]", false,
@@ -184,17 +194,14 @@ int main(int argc, char** argv) {
                     "Show only errors. [0 = no]", false,
                     false, "boolean", cmd);
 
-    TCLAP::ValueArg<std::string> cmdThumbnailFile("t", "thumbnail",
-                    "Load drawing image from file.", false,
-                    "", "string", cmd);
-
-    TCLAP::ValueArg<bool> cmdClipboard("c", "clipboard",
-                    "Import drawing image from clipboard. [0 = no]\n"
-                    "If both -t and -c are not used, program will try to run the screensaver.", false,
-                    false, "boolean", cmd);
+    TCLAP::ValueArg<std::string> cmdDHdir("d", "dh-path",
+                    "Home directory of DH screensaver. [c:\\DrawingHand\\]\n"
+                    "Note that if default directory doesn't exist or you'll specify nonexisting path, current folder will be used.", false,
+                    "c:\\DrawingHand\\", "string", cmd);
 
     TCLAP::ValueArg<bool> cmdBatch("b", "batch",
-                    "Batch mode, do not backup/restore config.dat automatically, to reduce disk usage.\n(Backup and restore manually or delete config.dat, because it will be broken!). [0 = no]", false,
+                    "Batch mode, do not backup/restore config.dat automatically, to reduce disk usage.\n"
+                    "(Backup and restore manually or delete config.dat, because it will be broken!) [0 = no]", false,
                     false, "boolean", cmd);
 
     // parse command line arguments
@@ -214,6 +221,7 @@ int main(int argc, char** argv) {
     force_drawing      = cmdForce.getValue();
     use_clipboard      = cmdClipboard.getValue();
     batch              = cmdBatch.getValue();
+    dhc_path           = ShortPath(trailSlash(cmdDHdir.getValue()));
 
 
 // -----------------------------------------------------------------------------
@@ -348,18 +356,7 @@ drawing_error_msg:
         }
     } else {
         // capturing the drawing
-        // ---------------------------------------------------------------------
-        // writing temporary drawing
         std::string dh_temp_drawing = dhc_name + drawingExt;
-        if (!silent_process) std::cout << "Copying temporary drawing: \"" << dhc_path << dh_temp_drawing << "\"." << std::endl;
-        outfile = std::ofstream(dhc_path + dh_temp_drawing, std::ofstream::binary);
-        if (!outfile) {
-            std::cerr << "\nError writing \"" << dhc_path + dh_temp_drawing << "\"." << std::endl;
-            clear_all();
-            return -1;
-        }
-        outfile.write (reinterpret_cast<const char*>(drawing_buffer.data()), drawing_length);
-        outfile.close();
         // ---------------------------------------------------------------------
         // backuping configuration file
         std::string dhc_config_dat = dhc_path + dhc_config_name;
@@ -370,7 +367,9 @@ drawing_error_msg:
             std::ifstream old_config_dat (dhc_config_dat, std::ifstream::binary);
             if (!old_config_dat) {
 old_config_error_msg:
-                std::cerr << "\nError reading \"" << dhc_config_dat << "\"." << std::endl;
+                std::cerr << "\nError reading \"" << dhc_config_dat << "\".\n"
+                             "If the DH screensaver is installed, please configure it at least once or specify its path with '-d' option.\n"
+                             "If it's not installed, please use '-t' or '-c' options." << std::endl;
                 clear_all();
                 return -1;
             }
@@ -422,26 +421,37 @@ old_config_error_msg:
         outfile.write (&dhc_config5[0], sizeof(dhc_config5));
         outfile.close();
         // ---------------------------------------------------------------------
+        // writing temporary drawing
+        if (!silent_process) std::cout << "Copying temporary drawing: \"" << dhc_path << dh_temp_drawing << "\"." << std::endl;
+        outfile = std::ofstream(dhc_path + dh_temp_drawing, std::ofstream::binary);
+        if (!outfile) {
+            std::cerr << "\nError writing \"" << dhc_path + dh_temp_drawing << "\"." << std::endl;
+            clear_all();
+            return -1;
+        }
+        outfile.write (reinterpret_cast<const char*>(drawing_buffer.data()), drawing_length);
+        outfile.close();
+        // ---------------------------------------------------------------------
         //if (!silent_process) std::cout << "Running a screensaver..." << std::endl;
         dh_is_running = 1;
         dh_interrupted = false;
         long long dh_wait_end = cv::getTickCount() + cv::getTickFrequency() * dh_wait;
         std::thread(dh_run).detach();
         HWND dh_hwnd;
-        while (((dh_hwnd = FindWindowA("WindowsScreenSaverClass", NULL)) == NULL) && (cv::getTickCount() <= dh_wait_end)) {
+        while ((dh_is_running != -1) && ((dh_hwnd = FindWindowA("WindowsScreenSaverClass", NULL)) == NULL) && (cv::getTickCount() <= dh_wait_end)) {
             Sleep(300); //milliseconds
         }
         if (dh_hwnd == NULL) {
-            std::cerr << "Tired to wait a screensaver more than " << dh_wait << " seconds." << std::endl;
+            //std::cerr << "Tired to wait a screensaver more than " << dh_wait << " seconds." << std::endl;
             if (dh_is_running == -1) {
                 std::cerr << "Error running the screensaver." << std::endl;
             } else if (dh_is_running == 0) {
-                std::cerr << "Screensaver seems to be detected, but exited." << std::endl;
+                std::cerr << "Screensaver seems to ran, but exited." << std::endl;
             } else if (dh_is_running == 1) {
                 std::cerr << "Screensaver seems to be running, wrong window class?" << std::endl;
             }
-            clear_all();
-            return -1;
+            dh_interrupted = true;
+            goto temp_cleanup;
         } else {
             //if (!silent_process) std::cout << "Detected a screensaver after " << ((cv::getTickCount() - dh_wait_end) / cv::getTickFrequency() + dh_wait) << " seconds, waiting for it to finish." << std::endl;
             //if (!silent_process) std::cout << "Getting screenshot." << std::endl;
@@ -581,7 +591,7 @@ temp_cleanup:
         }
         config_dat_buffer.clear();
         if (dh_interrupted) {
-            std::cerr << "\nThe process was interrupted, screenshot is not taken.\nStop." << std::endl;
+            std::cerr << "\nThe process was interrupted, screenshot is not taken." << std::endl;
             clear_all();
             return -1;
         }
@@ -607,7 +617,7 @@ temp_cleanup:
 
     bool drawing_written = false;
 
-    if (!silent_process) std::cout << "Cropping the screenshot." << std::endl;
+    if (!silent_process) std::cout << "Cropping image." << std::endl;
     unsigned iw = image.size().width;
     unsigned ih = image.size().height;
     unsigned ct = 0;
