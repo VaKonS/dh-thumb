@@ -166,7 +166,7 @@ void dh_run() {
 int main(int argc, char** argv) {
 
     // definition of command line arguments
-    TCLAP::CmdLine cmd("dh-thumb", ' ', "1.41");
+    TCLAP::CmdLine cmd("dh-thumb", ' ', "1.5");
 
     TCLAP::ValueArg<std::string> cmdInputFile("i", "input-drawing",
                     "Original drawing filename.", true,
@@ -692,7 +692,7 @@ temp_cleanup:
     ct = std::min(ct, ih - cb);
     //std::cout << "edge: " << edge << std::endl;
     if (edge < 12.0) { // 3.0 * [left, right, top, bottom]
-        if (!silent_process) std::cout << "Edges are not solid (" << edge / 4 << " < 3), some borders left." << std::endl;
+        if (!silent_process) std::cout << "Edges are too conforming with background (" << edge / 4 << " < 3), leaving some borders." << std::endl;
         cl = static_cast<unsigned>(std::max(0, static_cast<int>(cl) - 17));
         ct = static_cast<unsigned>(std::max(0, static_cast<int>(ct) - 17));
     }
@@ -704,9 +704,9 @@ temp_cleanup:
         if (exportExt[0] != '.') ThumbPreview += ".";
         ThumbPreview += exportExt;
         if (!silent_process) std::cout << "Writing cropped image: \"" << ThumbPreview << "\"." << std::endl;
-        if (!cv::imwrite(ThumbPreview, image)) std::cerr << "\nError saving cropped image \"" << ThumbPreview << "\". Please check that it's not write-protected." << std::endl;
+        if (!cv::imwrite(ThumbPreview, image)) std::cerr << "\nError saving cropped image \"" << ThumbPreview << "\". Please check that it's not write-protected." << std::endl; //error is not fatal, so not quitting
+        //if (!cv::imwrite(ThumbPreview, image, OpenCV_JPEG_options)) std::cerr << "\nError saving cropped image \"" << ThumbPreview << "\". Please check that it's not write-protected." << std::endl;
     }
-
 
     cv::Size imageSize = image.size();
     double Xds = 119.0 / static_cast<double>(imageSize.width);
@@ -799,7 +799,7 @@ if (drawingType == 1) {
             break; // pattern was not found
     }
 
-    std::cout << "\nDrawing data is not found in \"" << rdr_pInputFile << "\".\nCan not make valid drawing file." << std::endl;
+    std::cerr << "\nDrawing data is not found in \"" << rdr_pInputFile << "\".\nCan not make valid drawing file." << std::endl;
     clear_all();
     return -1;
 
@@ -822,7 +822,7 @@ finish_drawing1:
         geeVersion = drawing_buffer[4 + sizeof(verHeader)] - '0'; //ver=8,9,?
         //if (!silent_process) std::cout << "Geerdr version: " << geeVersion << std::endl;
         if (drawing_buffer[0] != geeVersion) {
-            std::cout << "Header version does not match 'Version'. Stop." << std::endl;
+            std::cerr << "Header version does not match 'Version'. Stop." << std::endl;
             clear_all();
             return -1;
         }
@@ -838,7 +838,7 @@ finish_drawing1:
         data_pos = 22;
         if (memcmp(drawing_buffer.data() + 21, &ver9desc, sizeof(ver9desc)) == 0) {
             if (geeVersion != 9) {
-                std::cout << "'desc' found, but Version is not 9. Stop." << std::endl;
+                std::cerr << "'desc' found, but Version is not 9. Stop." << std::endl;
                 clear_all();
                 return -1;
             }
@@ -896,7 +896,7 @@ headerless_geerdr:
         }
         if (memcmp(drawing_buffer.data() + data_pos + 29, &geeSignature, sizeof(geeSignature)) != 0) {
 no_gee_sig:
-            std::cout << "\nDrawing data is not found in \"" << rdr_pInputFile << "\".\nCan not make valid drawing file." << std::endl;
+            std::cerr << "\nDrawing data is not found in \"" << rdr_pInputFile << "\".\nCan not make valid drawing file." << std::endl;
             clear_all();
             return -1;
         } //else {
@@ -905,7 +905,7 @@ no_gee_sig:
     }
 
     if ( (geeVersion != 8) and (geeVersion != 9) ) {
-        std::cout << "\n'Version' is not 8 or 9. Stop." << std::endl;
+        std::cerr << "\n'Version' is not 8 or 9. Stop." << std::endl;
         clear_all();
         return -1;
     }
