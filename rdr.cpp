@@ -85,7 +85,7 @@ const FIXED_KEYBD_INPUT EscKeySequence[] = {
                            {0, 0x01, KEYEVENTF_SCANCODE, 0, 0}}                    // Esc pressed
                          ,
                           {INPUT_KEYBOARD,                                         //type
-                           {0, 0x01, KEYEVENTF_SCANCODE or KEYEVENTF_KEYUP, 0, 0}} //ki.wVk, wScan, dwFlags, time, dwExtraInfo
+                           {0, 0x01, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP, 0, 0}} //ki.wVk, wScan, dwFlags, time, dwExtraInfo
 // */
                          };
 
@@ -97,7 +97,7 @@ int geeVersion; // 1-4 geerdr, 5-9 drawinghand
 int geeSubVersion;
 bool silent_process, force_drawing, use_clipboard, batch, dh_interrupted;
 int dh_is_running;
-std::string rdr_pInputFile, rdr_pThumbnailFile, rdr_pOutputFile, drawingExt, exportExt;
+std::string rdr_pInputFile, rdr_pThumbnailFile, rdr_pOutputFile, drawingExt, exportExt, autoRes;
 std::vector<uchar> jpeg_buff, screen_buff, drawing_buffer, config_dat_buffer;
 std::ofstream outfile;
 cv::Mat drawing_corners[4];
@@ -106,6 +106,7 @@ cv::Mat image;
 BITMAP bmp;
 char path_buf[20480];
 //char * envChar;
+DEVMODE screenMode;
 
 
 // ----------------------------------------------------------
@@ -210,6 +211,10 @@ int main(int argc, char** argv) {
                     "Possible extensions are: png, bmp, tif etc.", false,
                     "", "string", cmd);
 
+    TCLAP::ValueArg<std::string> cmdResolution("r", "resoluton",
+                    "\"W_H\" - when running screensaver, try to set screen resolution to W x H pixels. [don't change]", false,
+                    "", "string", cmd);
+
     // parse command line arguments
     try {
        	cmd.parse(argc, argv);
@@ -229,6 +234,7 @@ int main(int argc, char** argv) {
     batch              = cmdBatch.getValue();
     dhc_path           = ShortPath(trailSlash(cmdDHdir.getValue()));
     exportExt          = cmdThumbnailExport.getValue();
+    autoRes            = cmdResolution.getValue();
 
 
 // -----------------------------------------------------------------------------
@@ -363,6 +369,55 @@ drawing_error_msg:
         }
     } else {
         // capturing the drawing
+        if (!silent_process) std::cout << "Rendering drawing with screensaver." << std::endl;
+        // ---------------------------------------------------------------------
+        // setting screen resolution
+        int srx = 0, sry = 0, srb = 0;
+        if (autoRes.size() != 0) {
+            size_t rxp = autoRes.find("_");
+            if (rxp != std::string::npos) {
+                int rxx = strtol(autoRes.substr(0, rxp).c_str(), NULL, 0);
+                int rxy = strtol(autoRes.substr(rxp + 1, autoRes.size() - rxp - 1).c_str(), NULL, 0);
+                HDC sDC = GetDC(HWND_DESKTOP);
+                if (sDC) {
+                    srx = GetDeviceCaps(sDC, HORZRES);
+                    sry = GetDeviceCaps(sDC, VERTRES);
+                    srb = GetDeviceCaps(sDC, BITSPIXEL) * GetDeviceCaps(sDC, PLANES);
+                    ReleaseDC(HWND_DESKTOP, sDC);
+                    if ((rxx > srx) or (rxy > sry)) {
+                        //screenMode.dmBitsPerPel = 32;
+                        screenMode.dmPelsWidth  = rxx;
+                        screenMode.dmPelsHeight = rxy;
+                        screenMode.dmFields     = DM_PELSWIDTH | DM_PELSHEIGHT; //| DM_BITSPERPEL;
+                        screenMode.dmSize       = sizeof(DEVMODE);
+                        int cdsr = ChangeDisplaySettings(&screenMode, CDS_TEST);
+                        if (cdsr == DISP_CHANGE_SUCCESSFUL) {
+                            ChangeDisplaySettings(&screenMode, 0);
+                            if (!silent_process) std::cout << "Changing display resolution to " << rxx << "x" << rxy << " successful." << std::endl;
+                            goto DispResSet;
+                        } else {
+                            std::cerr << "\nChanging display resolution to " << rxx << "x" << rxy << " failed." << std::endl;
+                            clear_all();
+                            return -1;
+                        }
+                    } else {
+                        if (!silent_process) std::cout << "Changing resolution is not necessary." << std::endl;
+                        autoRes = "";
+                        goto DispResSet;
+                    }
+                } else { // can not get DC
+                    std::cerr << "\nChanging display resolution failed." << std::endl;
+                    clear_all();
+                    return -1;
+                }
+            } else {
+                std::cerr << "\nWrong screen size format. Please set to W_H." << std::endl;
+                clear_all();
+                return -1;
+            }
+        }
+DispResSet:
+
         std::string dh_temp_drawing = dhc_name + drawingExt;
         // ---------------------------------------------------------------------
         // backuping configuration file
@@ -439,7 +494,7 @@ old_config_error_msg:
         outfile.write (reinterpret_cast<const char*>(drawing_buffer.data()), drawing_length);
         outfile.close();
         // ---------------------------------------------------------------------
-        //if (!silent_process) std::cout << "Running a screensaver..." << std::endl;
+        // running the screensaver
         dh_is_running = 1;
         dh_interrupted = false;
         long long dh_wait_end = cv::getTickCount() + cv::getTickFrequency() * dh_wait;
@@ -579,11 +634,11 @@ old_config_error_msg:
         }
         //if (!silent_process) std::cout << "Screensaver thread exited." << std::endl;
 temp_cleanup:
-        // -----------------------------------------------------------------------------
+        // ---------------------------------------------------------------------
         // deleting temporary drawing
         if (!silent_process) std::cout << "Removing temporary drawing: \"" << dhc_path << dh_temp_drawing << "\"." << std::endl;
         remove((dhc_path + dh_temp_drawing).c_str());
-        // -----------------------------------------------------------------------------
+        // ---------------------------------------------------------------------
         // restoring original configuration
         if (!batch) {
             if (!silent_process) std::cout << "Restoring " << dhc_config_name << "." << std::endl;
@@ -597,6 +652,17 @@ temp_cleanup:
             outfile.close();
         }
         config_dat_buffer.clear();
+        // ---------------------------------------------------------------------
+        // restoring resolution
+        if (autoRes.size() != 0) {
+            if (!silent_process) std::cout << "Restoring display mode to " << srx << "x" << sry << "x" << srb << "." << std::endl;
+            screenMode.dmBitsPerPel = srb;
+            screenMode.dmPelsWidth  = srx;
+            screenMode.dmPelsHeight = sry;
+            screenMode.dmFields     = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL;
+            //screenMode.dmSize       = sizeof(DEVMODE);
+            ChangeDisplaySettings(&screenMode, 0);
+        }
         if (dh_interrupted) {
             std::cerr << "\nThe process was interrupted, screenshot is not taken." << std::endl;
             clear_all();
